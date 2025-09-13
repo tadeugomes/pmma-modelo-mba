@@ -1,0 +1,23 @@
+# OS/macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+.venv/
+.env
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editors/IDEs
+.vscode/
+.idea/
+
+# Project outputs (not versioned)
+output/
+
+# Jupyter
+.ipynb_checkpoints/
