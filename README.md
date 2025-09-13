@@ -1,10 +1,10 @@
-#+ PMMA Dados CIOPS — Documentação do Projeto
+# PMMA Dados CIOPS — Documentação do Projeto
 
-+ Repositório de dados e scripts para padronizar, unificar e documentar planilhas do CIOPS/PMMA (anos 2014–2024), produzindo um dataset único em Parquet, artefatos de mapeamento/qualidade e dicionário de dados.
+Repositório de dados e scripts para padronizar, unificar e documentar planilhas do CIOPS/PMMA (anos 2014–2024), produzindo um dataset único em Parquet, artefatos de mapeamento/qualidade e dicionário de dados.
 
-+ Repositório remoto: `git@github.com:tadeugomes/pmma_dados_ciops.git`
-+ Branch principal: `main`
-+ Aviso de tamanho: alguns `.xlsx` > 50MB (recomendação GitHub é 50MB; limite duro: 100MB). Ver seção “Git LFS”.
+- Repositório remoto: `git@github.com:tadeugomes/pmma_dados_ciops.git`
+- Branch principal: `main`
+- Aviso de tamanho: alguns `.xlsx` > 50MB (recomendação GitHub é 50MB; limite duro: 100MB). Ver seção “Git LFS”.
 
 ## Sumário
 
@@ -174,12 +174,6 @@ git push --force-with-lease
 - Erro ao escrever Parquet: o script já tenta `pyarrow` e `fastparquet`, e gera CSV se ambos falharem.
 - Colunas sem minúsculas no relatório: revise a etapa de normalização e a origem; o esperado é 0% pós-pipeline.
 - Aba incorreta escolhida: por padrão pega a primeira aba; ajuste em `scripts/pmma_profile_and_union.py` se necessário.
-
-## Próximos Passos (sugestões)
-
-- Definir conjunto “golden” de colunas padrão e validações obrigatórias.
-- Publicar artefatos oficiais via GitHub Releases com changelog.
-- Adicionar testes simples para funções de normalização e mapeamento.
 
 ---
 Esta documentação consolida o fluxo do projeto. Para detalhes adicionais do pipeline, veja `docs/PROCESSO.md:1`.
