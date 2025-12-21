@@ -21,3 +21,42 @@ output/
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Dados e datasets
+*.csv
+*.xlsx
+*.xls
+*.json
+dados_ciops_*.csv
+bases_trabalho/
+output/
+tratamento/
+tratamento_output/
+
+# Manter apenas o arquivo parquet oficial
+!dados_pm_2008_2023_tratado.parquet
+
+# Modelos treinados (arquivos grandes)
+*.pkl
+*.joblib
+*.h5
+*.pt
+*.pth
+models/
+saved_models/
+model_outputs/
+
+# Artefatos de ML
+ml_artifacts/
+experiments/
+mlruns/
+logs/
+
+# Documentação HTML gerada
+*.html
+slides_*.html
+
+# Arquivos de cache temporários
+.cache/
+*.tmp
+*.temp
