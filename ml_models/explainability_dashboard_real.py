@@ -28,6 +28,7 @@ except ImportError as e:
 def check_pmma_data():
     """Verifica se os dados PMMA estão disponíveis"""
     data_paths = [
+        '/Users/tgt/Documents/dados_pmma_copy/output/pmma_unificado_oficial.parquet',
         '/Users/tgt/Documents/dados_pmma_copy/pmma_unificado_oficial.parquet',
         '/Users/tgt/Documents/dados_pmma_copy/data/pmma_unificado_oficial.parquet',
         './pmma_unificado_oficial.parquet'
@@ -50,7 +51,7 @@ def load_pmma_data():
         df = pd.read_parquet(data_path)
 
         # Validações básicas
-        required_columns = ['data', 'bairro', 'ocorrencias']
+        required_columns = ['data', 'bairro']
         missing_columns = [col for col in required_columns if col not in df.columns]
 
         if missing_columns:
@@ -82,15 +83,26 @@ def show_attention_weights():
 
     try:
         # Inicializar modelo
-        model = BairroPredictionModel()
+        try:
+            model = BairroPredictionModel()
+        except Exception as model_error:
+            st.error(f"Erro ao carregar modelo: {str(model_error)}")
+            model = None
 
         # Interface para seleção
         col1, col2 = st.columns([1, 2])
 
         with col1:
             # Obter bairros reais dos dados
-            bairros_reais = df['bairro'].dropna().value_counts().head(20).index.tolist()
-            bairro_selecionado = st.selectbox("Selecione um bairro:", bairros_reais)
+            try:
+                bairros_reais = df['bairro'].dropna().value_counts().head(20).index.tolist()
+                if not bairros_reais:
+                    st.error("Nenhum bairro encontrado nos dados")
+                    return
+                bairro_selecionado = st.selectbox("Selecione um bairro:", bairros_reais)
+            except Exception as bairro_error:
+                st.error(f"Erro ao carregar bairros: {str(bairro_error)}")
+                return
 
             # Mostrar informações do bairro
             bairro_data = df[df['bairro'] == bairro_selecionado]
@@ -107,23 +119,51 @@ def show_attention_weights():
                 with st.spinner("Analisando padrões temporais..."):
                     # Preparar dados para o modelo
                     try:
+                        # Validar dados do bairro
+                        if len(bairro_data) == 0:
+                            st.error("Nenhuma ocorrência encontrada para este bairro")
+                            return
+
                         # Criar dados horários (agregação)
+                        st.info(f"Processando {len(bairro_data)} ocorrências...")
                         bairro_data_sorted = bairro_data.sort_values('data')
+
+                        # Verificar se há dados válidos
+                        if bairro_data_sorted['data'].isna().all():
+                            st.error("Dados de data inválidos")
+                            return
+
                         hourly_data = bairro_data_sorted.groupby(
                             pd.Grouper(key='data', freq='H')
                         ).size().reset_index(name='ocorrencias')
 
+                        st.info(f"Agregados {len(hourly_data)} registros horários")
+
                         if len(hourly_data) < 24:
-                            st.error(f"Dados insuficientes: {len(hourly_data)} horas (mínimo: 24)")
-                            return
+                            st.warning(f"Dados limitados: {len(hourly_data)} horas (recomendado: 24+)")
+                            # Continuar mesmo com menos dados
 
                         # Gerar attention weights simulados baseados em padrões reais
                         np.random.seed(42)
                         hours = list(range(24))
 
                         # Basear pesos em dados reais
-                        hourly_pattern = hourly_data.groupby(hourly_data['data'].dt.hour)['ocorrencias'].mean()
-                        attention_weights = np.random.dirichlet(hourly_pattern.values + 1) * 100
+                        try:
+                            hourly_pattern = hourly_data.groupby(hourly_data['data'].dt.hour)['ocorrencias'].mean()
+
+                            # Verificar se temos dados suficientes
+                            if len(hourly_pattern) == 0:
+                                st.error("Não foi possível calcular padrão horário")
+                                return
+
+                            # Preencher horas faltantes com média
+                            all_hours = range(24)
+                            hourly_pattern = hourly_pattern.reindex(all_hours, fill_value=hourly_pattern.mean())
+
+                            attention_weights = np.random.dirichlet(hourly_pattern.values + 1) * 100
+                        except Exception as pattern_error:
+                            st.error(f"Erro ao calcular padrão horário: {str(pattern_error)}")
+                            return
 
                         # Identificar picos importantes baseados em dados reais
                         peak_hours_real = hourly_pattern.nlargest(3).index.tolist()
@@ -495,7 +535,7 @@ def main():
             Formato: Apache Parquet (.parquet)
             Tamanho esperado: ~136MB (2.262.405 registros)
             Período: 2014-2024
-            Colunas obrigatórias: data, bairro, ocorrencias
+            Colunas obrigatórias: data, bairro
             """)
 
         return  # Para a execução aqui se não houver dados
