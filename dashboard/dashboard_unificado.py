@@ -35,27 +35,34 @@ st.markdown("---")
 @st.cache_data
 def load_data():
     """Carrega os dados reais da PMMA"""
+    # Ordem de paths otimizada para Streamlit Cloud
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     paths = [
-        'pmma_unificado_oficial.parquet',
-        '../output/pmma_unificado_oficial.parquet',
-        '../../output/pmma_unificado_oficial.parquet',
-        '/Users/tgt/Documents/dados_pmma_copy/output/pmma_unificado_oficial.parquet',
-        './output/pmma_unificado_oficial.parquet'
+        os.path.join(base_dir, 'output', 'pmma_unificado_oficial.parquet'),  # Streamlit Cloud
+        '../output/pmma_unificado_oficial.parquet',  # Local (relativo)
+        'output/pmma_unificado_oficial.parquet',  # Raiz
+        './output/pmma_unificado_oficial.parquet'  # Atual
     ]
 
     for path in paths:
-        if os.path.exists(path):
-            df = pd.read_parquet(path)
-            # Limpeza básica
-            df = df.dropna(subset=['data'])
-            df['data'] = pd.to_datetime(df['data'], errors='coerce')
-            df = df.dropna(subset=['data'])
-            df['hora_num'] = pd.to_numeric(df['hora_num'], errors='coerce').fillna(0)
-            df['area'] = df['area'].fillna('Não Informada').str.lower().str.strip()
-            df['dia_semana'] = df['data'].dt.day_name()
-            df['mes'] = df['data'].dt.month
-            df['ano'] = df['data'].dt.year
-            return df
+        try:
+            if os.path.exists(path):
+                df = pd.read_parquet(path)
+                # Limpeza básica
+                df = df.dropna(subset=['data'])
+                df['data'] = pd.to_datetime(df['data'], errors='coerce')
+                df = df.dropna(subset=['data'])
+                df['hora_num'] = pd.to_numeric(df['hora_num'], errors='coerce').fillna(0)
+                df['area'] = df['area'].fillna('Não Informada').str.lower().str.strip()
+                df['dia_semana'] = df['data'].dt.day_name()
+                df['mes'] = df['data'].dt.month
+                df['ano'] = df['data'].dt.year
+                return df
+        except Exception as e:
+            st.warning(f"Erro ao carregar {path}: {str(e)}")
+            continue
+
+    st.error(f"❌ Dados PMMA não encontrados. Diretório atual: {os.getcwd()}")
     return None
 
 # =====================================
