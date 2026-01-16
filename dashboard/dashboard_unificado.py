@@ -14,6 +14,11 @@ import os
 import sys
 from datetime import datetime, date, time, timedelta
 import torch
+import gdown
+from typing import Optional
+
+PMMA_DATA_URL = "https://drive.google.com/file/d/1ptdG21Rg-CBWFPXue11fGg3KYWNnhNQV/view?usp=sharing"
+PMMA_DATA_FILE = "pmma_unificado_oficial.parquet"
 
 # Adicionar path dos modelos
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'ml_models'))
@@ -32,18 +37,26 @@ st.markdown("*Análise preditiva e explicabilidade para tomada de decisão opera
 st.markdown("---")
 
 # Função para carregar dados PMMA
-@st.cache_data
 def load_data():
     """Carrega os dados reais da PMMA"""
     # Ordem de paths otimizada para Streamlit Cloud
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    paths = [
-        os.path.join(base_dir, 'output', 'pmma_unificado_oficial.parquet'),  # Streamlit Cloud
+    default_path = os.path.join(base_dir, 'output', PMMA_DATA_FILE)
+
+    ensure_data_available(default_path)
+
+    paths = (
+        default_path,  # Streamlit Cloud
         '../output/pmma_unificado_oficial.parquet',  # Local (relativo)
         'output/pmma_unificado_oficial.parquet',  # Raiz
         './output/pmma_unificado_oficial.parquet'  # Atual
-    ]
+    )
 
+    return _load_data_from_paths(paths)
+
+
+@st.cache_data
+def _load_data_from_paths(paths):
     for path in paths:
         try:
             if os.path.exists(path):
@@ -64,6 +77,47 @@ def load_data():
 
     st.error(f"❌ Dados PMMA não encontrados. Diretório atual: {os.getcwd()}")
     return None
+
+
+def _is_lfs_pointer(path: str) -> bool:
+    try:
+        if os.path.getsize(path) > 1024:
+            return False
+        with open(path, "rb") as f:
+            head = f.read(200)
+        return b"git-lfs" in head and b"oid sha256" in head
+    except OSError:
+        return False
+
+
+def _resolve_data_url() -> Optional[str]:
+    data_url = os.getenv("DATA_URL")
+    if data_url:
+        return data_url
+    try:
+        return st.secrets.get("DATA_URL") or PMMA_DATA_URL
+    except Exception:
+        return PMMA_DATA_URL
+
+
+def ensure_data_available(data_path: str) -> None:
+    if os.path.exists(data_path) and not _is_lfs_pointer(data_path):
+        return
+
+    data_url = _resolve_data_url()
+    if not data_url:
+        return
+
+    os.makedirs(os.path.dirname(data_path), exist_ok=True)
+
+    if os.path.exists(data_path):
+        os.remove(data_path)
+
+    with st.spinner("Baixando dados do Google Drive..."):
+        downloaded = gdown.download(data_url, data_path, quiet=False, fuzzy=True)
+
+    if not downloaded or not os.path.exists(data_path):
+        st.error("Falha ao baixar o dataset. Verifique o link do Google Drive.")
 
 # =====================================
 # FUNÇÕES DE EXPLICABILIDADE
