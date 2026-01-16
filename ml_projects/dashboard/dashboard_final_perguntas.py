@@ -12,7 +12,20 @@ from streamlit_folium import st_folium
 from collections import Counter
 import re
 import os
+import sys
 from datetime import datetime, date, time, timedelta
+from typing import Optional
+import gdown
+
+PMMA_DATA_URL = "https://drive.google.com/file/d/1ptdG21Rg-CBWFPXue11fGg3KYWNnhNQV/view?usp=sharing"
+PMMA_DATA_FILE = "pmma_unificado_oficial.parquet"
+PMMA_LIGHT_MAX_ROWS = 250_000
+PMMA_DATA_COLUMNS = (
+    "data",
+    "hora_num",
+    "area",
+    "bairro",
+)
 
 # Configuração da página
 st.set_page_config(
@@ -27,31 +40,173 @@ st.title("🚔 Sistema de Inteligência Policial - PMMA")
 st.markdown("*Análise preditiva para tomada de decisão operacional*")
 st.markdown("---")
 
-# Carregar dados reais
-@st.cache_data
-def load_data():
-    """Carrega os dados reais da PMMA"""
-    paths = [
-        '../output/pmma_unificado_oficial.parquet',
-        '../../output/pmma_unificado_oficial.parquet',
-        '/Users/tgt/Documents/dados_pmma_copy/output/pmma_unificado_oficial.parquet',
-        './output/pmma_unificado_oficial.parquet'
-    ]
+def _default_data_path() -> str:
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(base_dir, "output", PMMA_DATA_FILE)
 
-    for path in paths:
-        if os.path.exists(path):
-            df = pd.read_parquet(path)
-            # Limpeza básica
-            df = df.dropna(subset=['data'])
-            df['data'] = pd.to_datetime(df['data'], errors='coerce')
-            df = df.dropna(subset=['data'])
-            df['hora_num'] = pd.to_numeric(df['hora_num'], errors='coerce').fillna(0)
-            df['area'] = df['area'].fillna('Não Informada').str.lower().str.strip()
-            df['dia_semana'] = df['data'].dt.day_name()
-            df['mes'] = df['data'].dt.month
-            df['ano'] = df['data'].dt.year
-            return df
+
+def _is_lfs_pointer(path: str) -> bool:
+    try:
+        if os.path.getsize(path) > 1024:
+            return False
+        with open(path, "rb") as f:
+            head = f.read(200)
+        return b"git-lfs" in head and b"oid sha256" in head
+    except OSError:
+        return False
+
+
+def _resolve_data_url() -> Optional[str]:
+    data_url = os.getenv("DATA_URL")
+    if data_url:
+        return data_url
+    try:
+        return st.secrets.get("DATA_URL") or PMMA_DATA_URL
+    except Exception:
+        return PMMA_DATA_URL
+
+
+def ensure_data_available(data_path: str) -> None:
+    if os.path.exists(data_path) and not _is_lfs_pointer(data_path):
+        return
+
+    data_url = _resolve_data_url()
+    if not data_url:
+        return
+
+    os.makedirs(os.path.dirname(data_path), exist_ok=True)
+
+    if os.path.exists(data_path):
+        os.remove(data_path)
+
+    with st.spinner("Baixando dados do Google Drive..."):
+        downloaded = gdown.download(data_url, data_path, quiet=False, fuzzy=True)
+
+    if not downloaded or not os.path.exists(data_path):
+        st.error("Falha ao baixar o dataset. Verifique o link do Google Drive.")
+
+
+def _resolve_max_rows(load_mode: str) -> Optional[int]:
+    env_value = os.getenv("PMMA_MAX_ROWS")
+    if env_value:
+        try:
+            return int(env_value)
+        except ValueError:
+            return None
+    if load_mode.startswith("Leve"):
+        return PMMA_LIGHT_MAX_ROWS
     return None
+
+
+def _read_parquet(path: str, columns: Optional[tuple], max_rows: Optional[int]) -> pd.DataFrame:
+    if not max_rows or max_rows <= 0:
+        return pd.read_parquet(path, columns=list(columns) if columns else None)
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    parquet_file = pq.ParquetFile(path)
+    tables = []
+    total_rows = 0
+
+    for idx in range(parquet_file.num_row_groups):
+        table = parquet_file.read_row_group(idx, columns=list(columns) if columns else None)
+        tables.append(table)
+        total_rows += table.num_rows
+        if total_rows >= max_rows:
+            break
+
+    if not tables:
+        return pd.DataFrame(columns=list(columns) if columns else None)
+
+    combined = pa.concat_tables(tables, promote=True)
+    if total_rows > max_rows:
+        combined = combined.slice(0, max_rows)
+
+    return combined.to_pandas()
+
+
+def _normalize_data(df: pd.DataFrame) -> pd.DataFrame:
+    if "data" in df.columns:
+        df = df.dropna(subset=["data"])
+        df["data"] = pd.to_datetime(df["data"], errors="coerce")
+        df = df.dropna(subset=["data"])
+        df["dia_semana"] = df["data"].dt.day_name()
+        df["mes"] = df["data"].dt.month
+        df["ano"] = df["data"].dt.year
+    else:
+        df["data"] = pd.NaT
+        df["dia_semana"] = ""
+        df["mes"] = pd.NA
+        df["ano"] = pd.NA
+
+    if "hora_num" in df.columns:
+        df["hora_num"] = pd.to_numeric(df["hora_num"], errors="coerce").fillna(0).astype("int16")
+    else:
+        df["hora_num"] = 0
+
+    if "area" in df.columns:
+        df["area"] = df["area"].fillna("Não Informada").astype(str).str.lower().str.strip()
+    else:
+        df["area"] = "não informada"
+
+    if "bairro" in df.columns:
+        df["bairro"] = df["bairro"].fillna("Não Informado").astype(str).str.strip()
+    else:
+        df["bairro"] = "Não Informado"
+
+    return df
+
+
+@st.cache_data
+def _load_data_from_paths(paths, columns: Optional[tuple], max_rows: Optional[int]):
+    for path in paths:
+        try:
+            if os.path.exists(path):
+                df = _read_parquet(path, columns=columns, max_rows=max_rows)
+                df = _normalize_data(df)
+                return df
+        except Exception as e:
+            st.warning(f"Erro ao carregar {path}: {str(e)}")
+            continue
+    return None
+
+
+def load_data(max_rows: Optional[int] = None, columns: Optional[tuple] = None, download_if_missing: bool = True):
+    """Carrega os dados reais da PMMA"""
+    default_path = _default_data_path()
+
+    if download_if_missing:
+        ensure_data_available(default_path)
+
+    paths = (
+        default_path,
+        os.path.join(os.getcwd(), "output", PMMA_DATA_FILE),
+        "./output/pmma_unificado_oficial.parquet",
+        "../../output/pmma_unificado_oficial.parquet",
+    )
+
+    return _load_data_from_paths(paths, columns=columns, max_rows=max_rows)
+
+# Sidebar: carregamento de dados
+st.sidebar.markdown("### 📦 Dados")
+default_path = _default_data_path()
+data_file_ready = os.path.exists(default_path) and not _is_lfs_pointer(default_path)
+
+if "pmma_load_data" not in st.session_state:
+    st.session_state.pmma_load_data = data_file_ready
+
+load_mode = st.sidebar.selectbox(
+    "Modo de carregamento",
+    ["Leve (recomendado)", "Completo"],
+    index=0,
+)
+max_rows = _resolve_max_rows(load_mode)
+
+st.sidebar.checkbox("Carregar dados", key="pmma_load_data")
+
+if not data_file_ready:
+    st.sidebar.caption("Dados serão baixados do Google Drive ao carregar.")
 
 # Sidebar para navegação
 st.sidebar.title("Navegação")
@@ -65,17 +220,26 @@ page = st.sidebar.selectbox(
 )
 
 # Tentar carregar dados
-try:
-    df = load_data()
-    if df is not None:
-        st.sidebar.success(f"✅ {len(df):,} registros carregados")
-        data_loaded = True
-    else:
-        st.sidebar.error("❌ Dados não encontrados")
-        data_loaded = False
-except Exception as e:
-    st.sidebar.error(f"❌ Erro: {str(e)}")
-    data_loaded = False
+df = None
+data_loaded = False
+if st.session_state.pmma_load_data:
+    try:
+        df = load_data(
+            max_rows=max_rows,
+            columns=PMMA_DATA_COLUMNS,
+            download_if_missing=True,
+        )
+        if df is not None and len(df) > 0:
+            st.sidebar.success(f"✅ {len(df):,} registros carregados")
+            data_loaded = True
+            if max_rows:
+                st.sidebar.caption(f"Modo leve: até {max_rows:,} linhas")
+        else:
+            st.sidebar.error("❌ Dados não encontrados")
+    except Exception as e:
+        st.sidebar.error(f"❌ Erro: {str(e)}")
+else:
+    st.sidebar.info("ℹ️ Dados não carregados. Ative 'Carregar dados'.")
 
 # Página 1: Visão Geral
 if page == "📊 Visão Geral":
@@ -512,8 +676,12 @@ elif page == "🎯 Otimização de Recursos":
 # Página 5: Previsão por Bairros
 elif page == "🏘️ Previsão por Bairros":
     # Importar o componente de bairros
-    import sys
-    sys.path.insert(0, '/Users/tgt/Documents/dados_pmma_copy/ml_models')
+    models_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "ml_models",
+    )
+    if models_path not in sys.path:
+        sys.path.insert(0, models_path)
     from bairro_dashboard_component import show_bairro_prediction_page
     show_bairro_prediction_page(df)
 
